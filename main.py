@@ -10,61 +10,71 @@ app = FastAPI()
 app.include_router(parse.router)
 
 
+# Keep-alive function to send periodic pings
+async def keep_alive(websocket: WebSocket, client_id: str):
+    while True:
+        try:
+            await asyncio.sleep(10)  # Send ping every 10 seconds
+            await websocket.send_text("ping")
+            print(f"Sent ping to client {client_id}")
+        except Exception as e:
+            print(f"Error sending ping to client {client_id}: {e}")
+            break
+
 @app.on_event("startup")
 async def startup_event():
-    # Подключение к Redis и запуск слушателя
     r = redis.Redis.from_url(settings.REDIS_URL)
-    pubsub = r.pubsub()
+    try:
+        await r.ping()
+        print("Successfully connected to Redis")
+    except Exception as e:
+        print(f"Failed to connect to Redis: {e}")
+        return
 
-    # Подписываемся только на каналы, начинающиеся с "ws:"
+    pubsub = r.pubsub()
     await pubsub.psubscribe("ws:*")
+    print("Subscribed to ws:* channels")
 
     async def redis_listener():
-        print("Redis listener task started")
-        async for message in pubsub.listen():
-            if message["type"] == "pmessage":
-                try:
-                    # Извлекаем client_id из шаблона канала (ws:client_id)
-                    pattern = message["pattern"].decode()
-                    channel = message["channel"].decode()
-
-                    # Проверяем, что это наш канал
-                    if pattern == "ws:*":
-                        # Извлекаем client_id из канала
-                        client_id = channel.split(":")[1]
-                        data = message["data"].decode()
-                        print(f"Received Redis message for {client_id}: {data}")
-
-                        # Отправляем сообщение клиенту
-                        await manager.send_message(client_id, data)
-                    else:
-                        print(f"Ignoring non-client message: {channel}")
-                except Exception as e:
-                    print(f"Ошибка обработки сообщения Redis: {str(e)}")
-
+        print("Redis listener started")
+        while True:
+            message = await pubsub.get_message()
+            if message and message["type"] == "pmessage":
+                channel = message["channel"].decode()
+                client_id = channel.split(":")[1]
+                data = message["data"].decode()
+                print(f"Received Redis message for {client_id}: {data}")
+                success = await manager.send_message(client_id, data)
+                if success:
+                    print(f"Message sent to client {client_id}")
+                else:
+                    print(f"Failed to send message to client {client_id}")
+            await asyncio.sleep(0.1)  # Prevent tight loop
+    
     asyncio.create_task(redis_listener())
-
+    print("Redis listener task started")
 
 # main.py
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
     await manager.connect(client_id, websocket)
-    print(f"Клиент {client_id} подключен")
+    print(f"Client {client_id} connected")
+    keep_alive_task = asyncio.create_task(keep_alive(websocket, client_id))
     try:
         while True:
-            # Ожидаем сообщения от клиента
             data = await websocket.receive_text()
-            print(f"Получено от клиента {client_id}: {data}")
-
-            # Обработка тестового сообщения
+            print(f"Received from client {client_id}: {data}")
             if data == "TEST_CONNECTION":
                 await websocket.send_text("CONNECTION_OK")
-                print(f"Подтверждение отправлено клиенту {client_id}")
-
+                print(f"Sent CONNECTION_OK to client {client_id}")
     except WebSocketDisconnect:
-        print(f"Клиент {client_id} отключился")
+        print(f"Client {client_id} disconnected")
         manager.disconnect(client_id)
-
+        keep_alive_task.cancel()
+    except Exception as e:
+        print(f"Unexpected error in WebSocket for client {client_id}: {e}")
+        manager.disconnect(client_id)
+        keep_alive_task.cancel()
 
 @app.get("/check-connection/{client_id}")
 async def check_connection(client_id: str):
