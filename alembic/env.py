@@ -4,6 +4,8 @@ from alembic import context
 from app.db.session import Base
 from app.models.task import Task
 from app.core.config import settings
+from app.db.session import Base
+from app.models.user import User  # добавьте после создания модели User
 
 config = context.config
 fileConfig(config.config_file_name)

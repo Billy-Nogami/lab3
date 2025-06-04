@@ -7,3 +7,5 @@ websockets
 celery[redis]
 python-dotenv
 asyncio
+python-jose[cryptography]
+passlib

@@ -1,6 +1,7 @@
 import os
 import sys
 from app.db.session import engine
+from app.models.user import User
 from app.models.task import Base
 
 def create_tables():

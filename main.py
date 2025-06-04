@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from app.api import parse
+from app.api import parse, auth
 from app.websocket.manager import manager
 import asyncio
 import redis.asyncio as redis
@@ -7,6 +7,7 @@ from app.core.config import settings
 import json
 
 app = FastAPI()
+app.include_router(auth.router)
 app.include_router(parse.router)
 
 
